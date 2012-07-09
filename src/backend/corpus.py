@@ -2,6 +2,8 @@ import os
 import shutil
 import re
 import tempfile
+import csv
+import datetime
 from lib.porter2 import stem  
 from src.backend.tma_utils import slugify
 from src.backend.db import db
@@ -33,7 +35,7 @@ class Corpus:  # TODO use tma_utils TextCleaner
         self.textdir = os.path.join(self.workdir, 'textdir')
         os.system('mkdir %s' % self.textdir)
         self.remove_case = remove_case
-        self.rawtextfiles = []
+        self.textnametobasename = {}
         self.titles = [] # stores the (inferred) title of each document
         self.docct = 0
         self.vocabct = 0
@@ -46,6 +48,14 @@ class Corpus:  # TODO use tma_utils TextCleaner
         self.corpus_db = os.path.join(self.workdir,corpus_db)
         self.parsed_data = False
         self.pdf_list = []
+        self.metadata = None
+        # a series of options specific to DTM
+        self.seqfile = None
+        self.startdate = None
+        self.enddate = None
+        self.numoftimeperiods = 10 # how many time periods to divide into
+        self.timeperiods = None # a set of 2-tuples, each with start and end date
+        self.docsbytimeperiod = None
 
         # keep a db to reverse stem words
         if make_stem_db == -1:
@@ -77,6 +87,42 @@ class Corpus:  # TODO use tma_utils TextCleaner
             self.parse_zip(dataname)
         elif datatype in ['folder','txt','dat']:
             self.parse_folder(dataname)
+
+    def add_metadata(self, metadatafile):
+        """
+        parse metadata in CSV file and add to a dictionary
+        """
+
+        metadatahandle = open(metadatafile, 'rb')
+        metadatareader = csv.reader(metadatahandle)
+
+        self.metadata = {}
+        header = [s.lower() for s in metadatareader.next()] # one of these should be "filename", the rest are user-defined
+
+        if not "filename" in header:
+            print "incorrectly formatted metadata file."
+            return False
+
+        usingdates = True
+
+        for row in metadatareader:
+            rowdict = dict(zip(header, row))
+            filename = rowdict.pop("filename")
+            if "date" in rowdict and usingdates:
+                try:
+                    rowdict["date"] = datetime.datetime.strptime(rowdict["date"], "%Y-%m-%d")
+                    if self.startdate is None or self.enddate is None: # first date from the document
+                        self.startdate = rowdict["date"]
+                        self.enddate = rowdict["date"]
+                    else:
+                        self.startdate = min(self.startdate, rowdict["date"])
+                        self.enddate = max(self.enddate, rowdict["date"])
+                except:
+                    usingdates = False
+                    pass
+            self.metadata[filename] = rowdict
+
+        metadatahandle.close()
     
     def parse_zip(self, dataname):
         """
@@ -110,7 +156,7 @@ class Corpus:  # TODO use tma_utils TextCleaner
                 cmd = 'pdftotext %s %s' % (pdf, txtname) # TODO: figure out and print which documents did not convert
                 os.system(cmd)
                 toparsetexts.append(txtname)
-                self.rawtextfiles.append(txtname)
+                self.textnametobasename[txtname] = os.path.basename(pdf)
             print '--- finished pdf to text conversion ---'
                            
         print '---adding text to corpus---'    
@@ -127,10 +173,13 @@ class Corpus:  # TODO use tma_utils TextCleaner
                 continue
                 
             toparsetexts.append(txtname)
-            self.rawtextfiles.append(txtname) # TODO: fix code repetition with parsing pdfs
+            self.textnametobasename[txtname] = os.path.basename(txtf) # TODO: fix code repetition with parsing pdfs
             
         # now add all of the new texts to the corpus
         
+        if self.seqfile is not None : # doing a dynamic topic model
+            toparsetexts.sort(key=lambda text: self.metadata[self.textnametobasename[text]]['date'])
+
         cfile = self.open_corpus()
         if self.usepara: # make a directory for each of the individual paragraphs
             if not os.path.exists(self.paradir): 
@@ -181,11 +230,13 @@ class Corpus:  # TODO use tma_utils TextCleaner
                     if sum(wordcounts.values()) > self.minwords:
                         self.write_doc_line(cfile, wordcounts, dbase, prestem_dic)
                         usetitle = title + ' [P%d]' % useparanum
-                        self.titles.append(usetitle)    
+                        self.titles.append(usetitle)
+                        if self.seqfile is not None: 
+                            self._add_doc_to_time_period(tfile)
                         if not isinstance(usetitle, unicode):
                             usetitle = unicode(usetitle)                               
                         self.write_document(os.path.join(self.paradir, slugify(usetitle)),paraline)
-                        useparanum += 1  
+                        useparanum += 1
                     wordcounts = dict()
                     prestem_dic = dict() 
             infile.close()
@@ -193,8 +244,12 @@ class Corpus:  # TODO use tma_utils TextCleaner
                 if sum(wordcounts.values()) > self.minwords: 
                     self.write_doc_line(cfile, wordcounts, dbase, prestem_dic)
                     self.titles.append(title)
+                    if self.seqfile is not None:
+                        self._add_doc_to_time_period(tfile)
         cfile.close()
         dbase.commit()
+        if self.seqfile is not None:
+            self.write_seqfile(self.seqfile)
         if not self.parsed_data:
             dbase.add_index('term_doc_pair_idx1 ON term_doc_pair(term)')
             dbase.add_index('term_doc_pair_idx2 ON term_doc_pair(doc)')
@@ -202,7 +257,32 @@ class Corpus:  # TODO use tma_utils TextCleaner
         print '--- finished adding text to corpus ---'
         print
         self.parsed_data = True
-        
+
+    def _add_doc_to_time_period(self, docfilename):
+        """
+        takes a filename and adds it to the appropriate time period
+        """
+        doc = self.textnametobasename[docfilename]
+
+        if self.timeperiods is None:
+            self.timeperiods = []
+            duration = self.enddate - self.startdate
+            start = end = self.startdate
+
+            unittimeperiod = duration // self.numoftimeperiods
+            while end <= self.enddate:
+                end += unittimeperiod
+                self.timeperiods.append((start, end))
+                start = end
+
+            self.docsbytimeperiod = [[] for period in self.timeperiods]
+
+        for i in range(len(self.timeperiods)):
+            if self.timeperiods[i][0] <= self.metadata[doc]["date"] < self.timeperiods[i][1]:
+                self.docsbytimeperiod[i].append(doc)
+                break
+
+
     def write_doc_line(self, cfile, wordcounts, dbase, prestem_dic = None):
         """
         write a document line in lda-c format
@@ -218,7 +298,7 @@ class Corpus:  # TODO use tma_utils TextCleaner
             cfile.write('%d:%d ' % (self.vocab[wkey],wordcounts[wkey]))
         cfile.write('\n')
         self.wordct += sum(wordcounts.values())
-        self.docct += 1 
+        self.docct += 1
         
     def _obtain_clean_title(self, path):
         """
@@ -342,6 +422,17 @@ class Corpus:  # TODO use tma_utils TextCleaner
         ofile = open(loc, 'w')
         ofile.write(text)
         ofile.close()
+
+    def write_seqfile(self, outfile):
+        """
+        write a '-seq.dat' file for DTM
+        number of time periods, then doc count for each time period, each on its own line
+        """
+        sfile = open(outfile,'w')
+        sfile.write("%d\n" % len(self.docsbytimeperiod))
+        for period in self.docsbytimeperiod:
+            sfile.write("%d\n" % len(period))
+        sfile.close()  
 
     def write_titles(self, outfile):
         tfile = open(outfile,'w')                                                                                        

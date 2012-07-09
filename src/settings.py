@@ -31,7 +31,8 @@ sys.path.append(os.path.join(TRUNK_PATH, 'lib'))
 ALG_LOCS = {
     'lda':os.path.join(TRUNK_PATH, 'lib/lda-c-dist'),
     'hdp':os.path.join(TRUNK_PATH, 'lib/hdp'),
-    'ctm':os.path.join(TRUNK_PATH, 'lib/ctm-dist')
+    'ctm':os.path.join(TRUNK_PATH, 'lib/ctm-dist'),
+    'dtm':os.path.join(TRUNK_PATH, 'lib/dtm_release/dtm')
 }
 
 # read personal settings

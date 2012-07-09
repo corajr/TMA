@@ -9,6 +9,7 @@ from src.backend.corpus import Corpus
 from src.backend.ldaanalyzer import LDAAnalyzer
 from src.backend.hdpanalyzer import HDPAnalyzer
 from src.backend.ctmanalyzer import CTMAnalyzer
+from src.backend.dtmanalyzer import DTMAnalyzer
 from src.backend.tbrowser import *
 from src.backend.forms import AnalysisForm, PerplexityForm
 from src.backend.datacollector import DataCollector
@@ -54,11 +55,13 @@ def _process_form(request):
             is_valid = False
             has_web_data = False
             has_upload_data = False
+            has_upload_metadata = False
             has_arxiv_data = False
             algotype = form.cleaned_data['std_algo']
             doHDP = algotype == 'hdp'
             doLDA = algotype == 'lda'
             doCTM = algotype == 'ctm'
+            doDTM = algotype == 'dtm'
             datatype = form.cleaned_data['toy_selected'] # what type of data to process?
             
             # handle pdf collection from a given website TODO: put limitations and security checks, etc
@@ -86,6 +89,16 @@ def _process_form(request):
                 outfile.close()
                 has_upload_data = True
                 is_valid = True
+            metadatafile = form.cleaned_data['upload_metadata_file']
+            if metadatafile is None:
+                has_upload_metadata = False
+            elif datatype =="#data_upload":
+                upload_metadata_name = workdir + '/metadata.csv'
+                outfile = open(upload_metadata_name, 'wb+')
+                for chunk in metadatafile.chunks():
+                    outfile.write(chunk)
+                outfile.close()
+                has_upload_metadata = True
 
             # handle arXiv files
             arxiv_authors = form.cleaned_data['arxiv_author']
@@ -123,13 +136,18 @@ def _process_form(request):
                     minwords = 0
 
                 corpus = Corpus(workdir, stopwordfile=sw_file, remove_case = remove_case, dostem = doStem, minwords=minwords)
+                if has_upload_metadata:
+                    if doDTM:
+                        basecorpusfile = getattr(corpus, 'corpusfile')
+                        corpus.setattr('corpusfile', basecorpusfile.replace('.dat','-mult.dat'))
+                        corpus.setattr('seqfile', basecorpusfile.replace('.dat','-seq.dat'))
+                    corpus.add_metadata(upload_metadata_name)
                 if has_upload_data:
                     corpus.setattr('usepara', form.cleaned_data['upload_dockind'] == 'paras')
                     corpus.add_data(upload_data_name, ext[1:]) # TODO return to user if it is not a txt or dat or zip file
                 if has_web_data:
                     corpus.setattr('usepara', form.cleaned_data['url_dockind'] == 'paras')
                     corpus.add_data(webdir, 'folder')
-
                 if has_arxiv_data:
                     corpus.setattr('usepara', form.cleaned_data['url_dockind'] == 'paras')
                     corpus.add_data(arxiv_dir, 'folder')
@@ -224,6 +242,11 @@ def _process_form(request):
                     analyzer = CTMAnalyzer(ctmparams)
 
                     print analyzer.get_params()
+                elif doDTM:
+                    dtmparams = {'dtmdir': ALG_LOCS['dtm'],
+                        'lda_max_em_iter':form.cleaned_data['dtm_lda_max_em_iter']}
+                    dtmparams = dict(gblparams.items() + dtmparams.items())
+                    analyzer = DTMAnalyzer(dtmparams)
 
                 analyzer.do_analysis()
                 # save the analyzer for later use

@@ -11,6 +11,7 @@ class AnalysisForm(forms.Form):
            choices=(
            ('lda','Latent Dirichlet Allocation'),
            ('ctm','Correlated Topic Model'),
+           ('dtm','Dynamic Topic Model'),
            ('hdp','Hierarchical Dirichlet Process')
            )), help_text='Select the desired topic-modeling algorithm -- specific details for the slected algorithm can be found under \'Advanced Options\'')
     std_ntopics = forms.IntegerField(required=False, label='number of topics', max_value=MAX_NUM_TOPICS,  initial='10', widget=forms.TextInput(attrs={"id":"numtops"}), help_text='Select the number of topics for parametric topic models (HDP does not require this parameter).')
@@ -54,6 +55,7 @@ class AnalysisForm(forms.Form):
                                        ('files','Individual Files'),
                                        ('paras','Paragraphs (Lines)')
                                        )), help_text='Specify whether to treat each individual file as a document or each paragraph/line as a document. See the <a href="https://github.com/cjrd/TMA/wiki/TMA-Interface">Interface Documentation </a>for more information.')
+    upload_metadata_file = forms.FileField(required=False, widget=forms.FileInput(attrs={'size':'13'}), label='upload metadata file', help_text='Upload an optional metadata file in CSV format.')
     # ARXIV DATA
     arxiv_author = forms.CharField(required=False, label='author',help_text='Search <a href="http://www.arxiv.org">arXiv.org</a> for publications by the specified authors.\
         Separate multiple authors or various spellings using \'OR\', e.g. \'Michael I. Jordan OR Michael Jordan OR David Blei OR David M. Blei\', to search for the publications of the two authors.\
@@ -279,6 +281,8 @@ class AnalysisForm(forms.Form):
      score) / abs(score_old) is less than this value (or after the
      maximum number of iterations).  Note that "score" is the lower
      bound on the likelihood for the whole corpus.""")
+    dtm_lda_max_em_iter = forms.IntegerField(required=False, label='max EM iterations for LDA', initial='10', help_text="The maximum number of iterations of EM for the initial LDA of DTM")
+    dtm_time_periods = forms.IntegerField(required=False, label='number of time periods', initial='10', help_text="Number of time periods in the data")
 
     # RETRIEVERS
     def std_group(self):
@@ -289,6 +293,8 @@ class AnalysisForm(forms.Form):
         return self._get_fields('hdp_')
     def ctm_group(self):
         return self._get_fields('ctm_')
+    def dtm_group(self):
+        return self._get_fields('dtm_')
     def url_group(self):
         return self._get_fields('url_')
     def upload_group(self):

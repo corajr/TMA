@@ -1,7 +1,6 @@
 from itertools import imap, combinations
 from math import exp
 from src.backend.db import db
-from src.backend.generate_db import generate_db
 import pdb
 import os    
 from time import time
@@ -22,6 +21,10 @@ class TMAnalyzer(object):
             os.makedirs(params['outdir'])   
         self.params = params
         
+    def parse_metadata(self):
+        print "Model does not use metadata, will return None"
+        return None
+
     def do_analysis(self):
         raise NotImplementedError( "Should have implemented do_analysis in subclass analyzer" )
 
